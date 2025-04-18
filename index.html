@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <title>Smart Trivia Quiz</title>
+    <style>
+    :root {
+      --brand: #3f51b5;
+      --light: #f4f7ff;
+      --correct: #2e7d32;
+      --wrong: #c62828
+    }
+
+    * {
+      box-sizing: border-box;
+      font-family: Segoe UI, Arial
+    }
+
+    body {
+      margin: 0;
+      background: var(--light);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh
+    }
+
+    .card {
+      background: #fff;
+      width: min(600px, 90%);
+      padding: 32px 28px;
+      border-radius: 14px;
+      box-shadow: 0 8px 22px rgba(0, 0, 0, .12)
+    }
+
+    h1,
+    h2 {
+      margin: 0 0 18px;
+      text-align: center;
+      color: var(--brand)
+    }
+
+    select,
+    button {
+      width: 100%;
+      margin: 8px 0;
+      padding: 10px 14px;
+      font-size: 16px;
+      border: 2px solid var(--brand);
+      border-radius: 6px
+    }
+
+    button {
+      color: #fff;
+      background: var(--brand);
+      cursor: pointer
+    }
+
+    button:hover {
+      opacity: .9
+    }
+
+    .opt {
+      display: block;
+      width: 100%;
+      text-align: left;
+      border: 2px solid var(--brand);
+      background: #fff;
+      color: #000;
+      padding: 10px 14px;
+      border-radius: 6px;
+      margin: 6px 0
+    }
+
+    .opt:hover {
+      background: var(--light)
+    }
+
+    .opt.correct {
+      background: var(--correct);
+      color: #fff;
+      border-color: var(--correct)
+    }
+
+    .opt.wrong {
+      background: var(--wrong);
+      color: #fff;
+      border-color: var(--wrong)
+    }
+
+    #countDown {
+      font-weight: bold;
+      text-align: center;
+      color: #e65100;
+      margin-bottom: 12px
+    }
+
+    #scoreBig {
+      font-size: 26px;
+      text-align: center;
+      margin: 15px 0
+    }
+
+    #rank {
+      font-size: 22px;
+      text-align: center;
+      margin-bottom: 18px;
+      font-weight: 600
+    }
+
+    .hidden {
+      display: none
+    }
+
+    #options {
+      display: flex;
+      flex-direction: column
+    }
+  </style>
+  </head>
+
+  <body>
+
+    <div id="loader" class="card">Loading…</div>
+
+    <div id="menu" class="card hidden">
+      <h1>Trivia Quiz</h1>
+
+      <label>Quiz Type</label>
+      <select id="qtype">
+        <option value="multiple" selected>MCQs</option>
+        <option value="boolean">True / False</option>
+      </select>
+
+      <label>Question Amount</label>
+      <select id="amount">
+        <option value="10" selected>10</option>
+        <option value="20">20</option>
+      </select>
+
+      <label>Category</label>
+      <select id="category">
+        <option value>Loading categories…</option>
+      </select>
+
+      <label>Difficulty</label>
+      <select id="difficulty">
+        <option value>Any</option>
+        <option value="easy">Easy</option>
+        <option value="medium" selected>Normal</option>
+        <option value="hard">Hard</option>
+      </select>
+
+      <button onclick="startQuiz()">Start Quiz</button>
+    </div>
+
+    <div id="quiz" class="card hidden">
+      <div id="countDown"></div>
+      <h2 id="question"></h2>
+      <div id="options"></div>
+      <button style="margin-top:12px;background:#555"
+        onclick="quitGame()">Quit</button>
+    </div>
+
+    <div id="result" class="card hidden">
+      <h1>Result</h1>
+      <div id="scoreBig"></div>
+      <div id="rank"></div>
+      <button onclick="restart()">Restart</button>
+      <button style="margin-top:12px;background:#555" onclick="goMenu()">Quit to
+        Menu</button>
+    </div>
+
+    <script>
+    /* ---------- helpers ---------- */
+    const $ = id => document.getElementById(id);
+    const decode = s => { const t = document.createElement('textarea'); t.innerHTML = s; return t.value; };
+    const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1));[a[i], a[j]] = [a[j], a[i]]; } return a; };
+    const show = key => Object.values(panels).forEach(p => p.classList.add('hidden')) || panels[key].classList.remove('hidden');
+
+    /* ---------- panels ---------- */
+    const panels = { loader: $('loader'), menu: $('menu'), quiz: $('quiz'), result: $('result') };
+
+    /* ---------- state ---------- */
+    let settings = {}, qs = [], idx, score, timer, timeLeft;
+
+    /* ---------- load categories --------- */
+    (async function initCategories() {
+      const catSel = $('category');
+      try {
+        const r = await fetch('https://opentdb.com/api_category.php');
+        const d = await r.json();
+        catSel.innerHTML = '<option value="">Any Category</option>' +
+          d.trivia_categories.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+      } catch {
+        catSel.innerHTML = '<option value="">Any Category</option>';
+      }
+      show('menu');
+    })();
+
+    /* ---------- main ---------- */
+    async function startQuiz() {
+      settings = {
+        type: $('qtype').value,
+        amount: +$('amount').value,
+        cat: $('category').value,   // '' = any
+        diff: $('difficulty').value // '' = any
+      };
+      idx = 0; score = 0;
+      clearInterval(timer);
+      show('loader'); $('loader').textContent = 'Fetching questions…';
+      qs = await getQuestions(settings);
+      if (!qs.length) {
+        $('loader').textContent = 'No questions found for these settings.';
+        setTimeout(goMenu, 2500);
+        return;
+      }
+      show('quiz');
+      renderQuestion();
+    }
+
+    /* ---------- getQuestions (API‑only) ---------- */
+    async function getQuestions(s) {
+      const base = 'https://opentdb.com/api.php';
+      const build = (p) => `${base}?amount=${p.amount}&type=${s.type}` +
+        (p.cat ? `&category=${p.cat}` : '') +
+        (p.diff ? `&difficulty=${p.diff}` : '');
+      let remaining = s.amount, list = [];
+      const plans = [
+        { amount: remaining, cat: s.cat, diff: s.diff },
+        { amount: () => remaining, cat: s.cat, diff: '' },
+        { amount: () => remaining, cat: '', diff: s.diff },
+        { amount: () => remaining, cat: '', diff: '' }
+      ];
+      for (const plan of plans) {
+        if (remaining <= 0) break;
+        const url = build({ amount: typeof plan.amount == 'function' ? plan.amount() : plan.amount, cat: plan.cat, diff: plan.diff });
+        const part = await api(url);
+        list = [...list, ...part];
+        remaining = s.amount - list.length;
+      }
+      return list.slice(0, s.amount).map(q => ({
+        q: decode(q.question),
+        a: decode(q.correct_answer),
+        opts: shuffle([...q.incorrect_answers.map(decode), decode(q.correct_answer)])
+      }));
+    }
+
+    /* ---------- api helper ---------- */
+    async function api(url) {
+      try {
+        const r = await fetch(url);
+        if (!r.ok) throw 0;
+        const d = await r.json();
+        return d.response_code === 0 ? d.results : [];
+      } catch { return []; }
+    }
+
+    /* ---------- render ---------- */
+    function renderQuestion() {
+      clearInterval(timer);
+      timeLeft = 15;
+      $('countDown').textContent = `⏱️ ${timeLeft}s`;
+      timer = setInterval(() => {
+        timeLeft--;
+        $('countDown').textContent = `⏱️ ${timeLeft}s`;
+        if (timeLeft === 0) next();
+      }, 1000);
+
+      const q = qs[idx];
+      $('question').textContent = `${idx + 1}/${qs.length}. ${q.q}`;
+      const box = $('options'); box.innerHTML = '';
+      q.opts.forEach(txt => {
+        const b = document.createElement('button');
+        b.className = 'opt'; b.textContent = txt;
+        b.onclick = () => select(b, txt);
+        box.appendChild(b);
+      });
+    }
+
+    /* ---------- select ---------- */
+    function select(btn, choice) {
+      const q = qs[idx];
+      [...document.querySelectorAll('.opt')].forEach(b => b.onclick = null);
+      clearInterval(timer); $('countDown').textContent = '';
+      if (choice === q.a) { btn.classList.add('correct'); score++; }
+      else {
+        btn.classList.add('wrong');
+        [...document.querySelectorAll('.opt')].find(b => b.textContent === q.a).classList.add('correct');
+      }
+      setTimeout(() => next(), 2000);
+    }
+
+    /* ---------- navigation ---------- */
+    function next() { idx++; idx < qs.length ? renderQuestion() : finish(); }
+
+    function quitGame() {
+      clearInterval(timer);
+      show('loader'); $('loader').textContent = 'Game exited';
+      setTimeout(goMenu, 2000);
+    }
+
+    function finish() {
+      clearInterval(timer); show('result');
+      const pct = Math.round(score / qs.length * 100);
+      $('scoreBig').innerHTML = `Score: <strong>${score}</strong> / ${qs.length}<br>Percentage: ${pct}%`;
+      $('rank').textContent = pct >= 90 ? 'Brilliant 🌟' : pct >= 80 ? 'Excellent 🎉' : pct >= 50 ? 'Good 🙂' : pct < 33 ? 'Bad 😢' : 'Keep Trying!';
+    }
+
+    function restart() { startQuiz(); }
+    function goMenu() { clearInterval(timer); show('menu'); }
+  </script>
+  </body>
+
+</html>
